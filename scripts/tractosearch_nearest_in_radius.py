@@ -30,10 +30,29 @@ DESCRIPTION = """
     For each output file, it will also return a list of streamlines indices.
     These are the streamline indices from the initial "in_tractogram".
         
-    Example:
+    Example (if subject tractogram already in reference space) :
         tractosearch_nearest_in_radius.py sub01_prob_tracking.trk \\
           recobundle_atlas/AF_L.trk recobundle_atlas/AF_R.trk \\
           4.0 AF_seg_result/
+          
+    With TractoSearch Register :
+        tractosearch_register.py sub01_prob_tracking.trk \\
+          recobundle_atlas/*.trk sub01RegAtlas.txt \\
+
+        tractosearch_nearest_in_radius.py sub01_prob_tracking.trk \\
+          recobundle_atlas/AF_L.trk recobundle_atlas/AF_R.trk \\
+          4.0 AF_seg_result/ --transform sub01RegAtlas.txt
+          
+    With ANTs linear transform :
+        antsRegistrationSyNQuick.sh -d 3 -f mni.nii -m sub01_t1_dwi_space.nii\\
+          -o sub01_dwi2mni_
+        
+        ConvertTransformFile 3 sub01_dwi2mni_0GenericAffine.mat --hm --ras \\
+          dwi2mni_ras.txt
+
+        tractosearch_nearest_in_radius.py sub01_prob_tracking.trk \\
+          recobundle_atlas/AF_L.trk recobundle_atlas/AF_R.trk \\
+          4.0 AF_seg_result/ --inv_transform dwi2mni_ras.txt
     """
 
 EPILOG = """
@@ -82,16 +101,6 @@ def _build_arg_parser():
     p.add_argument('--ref_nii', default=None,
                    help='reference anatomy (nifti), for non ".trk" tractogram')
 
-    group = p.add_mutually_exclusive_group()
-    group.add_argument('--auto_register', choices=['rigid', 'affine'],
-                       help='Automatic registration with rigid or affine ICP approach')
-
-    group.add_argument('--transform',
-                       help='Apply affine transform to in_tractogram (.txt or .npy)')
-
-    group.add_argument('--inv_tranform',
-                       help='Apply the inverse affine transform to in_tractogram (.txt or .npy)')
-
     p.add_argument('--output_format', default="trk",
                    help='Output tractogram format, [%(default)s]')
 
@@ -103,6 +112,16 @@ def _build_arg_parser():
 
     p.add_argument('--cpu', type=int, default=4,
                    help='Number of cpu core for the Fast Streamlines search with LpqTree, [%(default)s]')
+
+    group = p.add_argument_group('transforms',
+                                 'Apply linear transform to in_tractogram for the search,\n '
+                                 'resulting streamlines will still be in the in_tractogram space')
+    gm = group.add_mutually_exclusive_group()
+    gm.add_argument('--transform',
+                    help='Linear (affine) transform (.txt or .npy)')
+
+    gm.add_argument('--inv_transform',
+                    help='Apply the inverse linear (affine) transform (.txt or .npy)')
 
     return p
 
@@ -137,8 +156,8 @@ def main():
     if args.transform:
         trfo = np.loadtxt(args.transform)
         slines_arr = apply_transform(slines_arr, trfo[:3, :3], trfo[0:3, 3])
-    elif args.inv_tranform:
-        trfo = np.invert(np.loadtxt(args.transform))
+    elif args.inv_transform:
+        trfo = np.linalg.inv(np.loadtxt(args.inv_transform))
         slines_arr = apply_transform(slines_arr, trfo[:3, :3], trfo[0:3, 3])
 
     # Compute mean-points
